@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "any2music"
+version = "0.0.0"
+authors = [
+    { name="Felipe Marra", email="felipeferreiramarra@gmail.com" },
+]
+description = "A package from the MOSAIC Group at Universidade Federal de Minas Gerais. At first it aims at generating music in various modalities and conditioned on various modalities."
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.packages.find]
+where = ["any2music"]
+

@@ -1,0 +1,7 @@
+torch==2.11.0+cu126
+torchaudio==2.11.0+cu126
+torchvision==0.26.0+cu126
+tqdm
+transformers==5.8.0
+einops
+torchcodec
