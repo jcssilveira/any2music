@@ -3,15 +3,15 @@ MOSAIC Any2Music (MAM) is a library for multimodal encoder-decoder model compone
 
 ## Instalation
 ```bash
-    git clone https://github.com/FelipeMarra/any2music.git
-    cd any2music
-    python3 -m pip install -e .
+git clone https://github.com/FelipeMarra/any2music.git
+cd any2music
+python3 -m pip install -e .
 ```
 
 ## Testing
 From the repositorie's root directory, run:
 ```bash
-    python3 -m pytest
+python3 -m pytest
 ```
 The `-s` flag can be used to show the prints inside the tests functions
 
