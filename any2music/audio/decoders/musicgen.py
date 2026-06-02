@@ -35,7 +35,7 @@ class MusicGenSizeValues():
     num_decoder_layers: int
 
 MUSICGEN_SIZES:tp.Dict[str, MusicGenSizeValues] = {
-    "test": MusicGenSizeValues(d_model=256, nhead=4, num_decoder_layers=2),
+    "test": MusicGenSizeValues(d_model=1024, nhead=16, num_decoder_layers=12), # 3213MiB
     "small": MusicGenSizeValues(d_model=1024, nhead=16, num_decoder_layers=24)
 }
 
@@ -229,7 +229,8 @@ class MusicGenTransformer(nn.Module):
     def __init__(self, encoder:tp.Optional[nn.TransformerEncoder] = None, model_size:MusicGenSize=MusicGenSize.SMALL, dtype=torch.bfloat16):
         super().__init__()
         self.size_params = MUSICGEN_SIZES[model_size.value]
-        self.vocab_size = 2048 + 1 # must match the codebook size used in Encodec
+        self.vocab_size = 2048 + 1 # must match the codebook size used in Encodec + 1 for padding
+        self.pad_token_id: int = 2048
         self.max_seq_len = 1504 # encodec_frame_rate * audio_duration + embedding_dim (for the delay_pattern) -> 50 * 30 + 4 -> 1504
         self.num_codebooks = 4
         self.dtype = dtype
@@ -256,17 +257,21 @@ class MusicGenTransformer(nn.Module):
 
     def forward(self, src, tgt, drop_conditioning=False):
         B, K, S = tgt.shape
+        # print(f"\nTarget shape: {tgt.shape}\n")
+        if src is not None: print(f"Src shape: {src.shape}\n")
 
         # CFG condition routing
         if self.encoder is None or drop_conditioning or src is None:
             # Unconditional path: Broadcast the learned null token across the batch.
             # This completely bypasses the encoder, saving compute!
             memory = self.null_memory.expand(B, 1, -1)
+            # print(f"Memory is null, with shape: {memory.shape}\n")
         else:
             # Conditional path: Run standard encoder
             # src_len = src.size(1)
             # enc_x = self.enc_embedding(src) * math.sqrt(self.size_params.d_model) + self.pos_embedding[:, :src_len, :]
             memory = self.encoder(src)
+            # print(f"Memory came from encoder with shape: {memory.shape}\n")
 
         # Get embeddings per codebook
         dec_embs = torch.zeros(B, S, self.size_params.d_model, device=tgt.device, dtype=self.dtype)
@@ -274,15 +279,21 @@ class MusicGenTransformer(nn.Module):
             dec_embs += self.dec_embedding_layers[i](tgt[:, i, :])
 
         # Scale and positional embedding
-        dec_embs = dec_embs * math.sqrt(self.size_params.d_model) + self.pos_embedding(tgt)
+        dec_embs = dec_embs * math.sqrt(self.size_params.d_model) + self.pos_embedding(tgt).to(self.dtype)
+        # print(f"Got decoder embedings with shape: {dec_embs.shape}\n")
 
         # Causal mask
         tgt_mask = nn.Transformer.generate_square_subsequent_mask(S, device=tgt.device).to(self.dtype)
+        # print(f"Got target mask with shape: {dec_embs.shape}")
+        # print(f"Target mask:\n{tgt_mask}\n")
 
         out = self.decoder(tgt=dec_embs, memory=memory, tgt_mask=tgt_mask)
+        #print(f"Got decoder output with shape:{out.shape}\n")
+        # print(f"Got decoder output:\n{out}\n")
 
-        # Returns shape: (B, K, S, vocab_size)
+        # Inference on the codebook heads
         logits = torch.stack([head(out) for head in self.lm_heads], dim=1)
+        # print(f"Got logits with shape:{logits.shape}\n")
 
         return logits
 
@@ -299,35 +310,39 @@ class MusicGenTransformer(nn.Module):
     @torch.no_grad()
     def generate(
         self,
-        model: torch.nn.Module,
-        src: torch.Tensor = None,
+        src: tp.Optional[torch.Tensor] = None,
         max_new_tokens: int = 200,
         temperature: float = 1.0,
         top_k: int = 250,
-        pad_token_id: int = 2048
     ):
         """
         Autoregressive generation loop for MusicGen.
         """
-        model.eval()
-        device = next(model.parameters()).device
+        self.eval()
+
+        # Dynamically get the device the model is currently on
+        device = next(self.parameters()).device
 
         # Determine batch size from the conditioning source, or default to 1
         B = src.shape[0] if src is not None else 1
         K = self.num_codebooks
 
+        # TODO: Add BOS and EOS
         # Initialize the target tensor with padding tokens (acts as the BOS token setup)
         # Shape: (B, K, 1)
-        tgt = torch.full((B, K, 1), pad_token_id, dtype=torch.long, device=device)
+        tgt = torch.full((B, K, 1), self.pad_token_id, dtype=torch.long, device=device)
 
         for step in range(max_new_tokens):
             # Forward pass
             # logits shape: (B, K, S, vocab_size)
-            logits = model(src=src, tgt=tgt)
+            logits = self(src=src, tgt=tgt)
 
             # Extract logits from the last step in the sequence
             # next_token_logits shape: (B, K, vocab_size)
             next_token_logits = logits[:, :, -1, :]
+
+            # Prevent the model from predicting the padding token during generation
+            next_token_logits[:, :, self.pad_token_id] = -float("Inf")
 
             # Apply Temperature scaling
             next_token_logits = next_token_logits / temperature
