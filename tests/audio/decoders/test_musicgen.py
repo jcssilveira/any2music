@@ -6,7 +6,7 @@ from any2music.audio.utils import load_mono_and_resample
 
 from any2music.audio.decoders.musicgen import DelayProvider, MusicGenTransformer, MusicGenSize
 
-AUDIO_PATH = "./audio_sample/legend_of_zelda.mp3"
+AUDIO_PATH = "./samples/audio/legend_of_zelda_snes.mp3"
 TEST_SECs = 15
 UPDATES = 50
 

@@ -9,7 +9,7 @@ import typing as tp
 
 import torch
 
-from .base import BaseQuantizer, QuantizedResult
+from any2music.base import BaseQuantizer, QuantizedResult
 from .core_vq import ResidualVectorQuantization
 
 

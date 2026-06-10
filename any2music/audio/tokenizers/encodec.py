@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from transformers import EncodecModel as HFEncodecModel
 
-from .base import BaseAudioTokenizer
+from any2music.base import BaseAudioTokenizer
 
 from .. import quantization as qt
 

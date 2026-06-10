@@ -6,4 +6,4 @@
 """RVQ."""
 # flake8: noqa
 from .vq import ResidualVectorQuantizer
-from .base import BaseQuantizer, DummyQuantizer, QuantizedResult
+from any2music.base import BaseQuantizer, DummyQuantizer, QuantizedResult

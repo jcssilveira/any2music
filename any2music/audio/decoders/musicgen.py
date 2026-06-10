@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from any2music.base import BaseDecoder
+
 # To unsderstand how they model it on hf go to
 # from transformers import MusicgenForConditionalGeneration
 # Which uses 
@@ -35,7 +37,7 @@ class MusicGenSizeValues():
     num_decoder_layers: int
 
 MUSICGEN_SIZES:tp.Dict[str, MusicGenSizeValues] = {
-    "test": MusicGenSizeValues(d_model=1024, nhead=16, num_decoder_layers=12), # 3213MiB
+    "test": MusicGenSizeValues(d_model=512, nhead=8, num_decoder_layers=6), # 3213MiB
     "small": MusicGenSizeValues(d_model=1024, nhead=16, num_decoder_layers=24)
 }
 
@@ -227,8 +229,13 @@ def get_musicgen_decoder(
 # MusicGen Transformer
 #########################################################
 
-class MusicGenTransformer(nn.Module):
-    def __init__(self, encoder:tp.Optional[nn.TransformerEncoder] = None, model_size:MusicGenSize=MusicGenSize.SMALL, dtype=torch.bfloat16):
+class MusicGenTransformer(BaseDecoder):
+    def __init__(
+            self, 
+            encoder:tp.Optional[nn.TransformerEncoder] = None, 
+            model_size:MusicGenSize=MusicGenSize.SMALL, 
+            dtype:torch.dtype=torch.bfloat16
+        ):
         super().__init__()
         self.size_params = MUSICGEN_SIZES[model_size.value]
         self.vocab_size = 2048 + 1 # must match the codebook size used in Encodec + 1 for padding
