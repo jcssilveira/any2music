@@ -5,3 +5,4 @@ tqdm
 transformers==5.8.0
 einops
 torchcodec
+descript-audio-codec
