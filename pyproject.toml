@@ -16,5 +16,5 @@ dynamic = ["dependencies"]
 dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools.packages.find]
-where = ["any2music"]
-
+where = ["."]
+include = ["any2music*"]

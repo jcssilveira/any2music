@@ -6,8 +6,7 @@ import torch
 from transformers import EncodecModel as HFEncodecModel
 
 from any2music.base import BaseAudioTokenizer
-
-from .. import quantization as qt
+import any2music.audio.quantization as qt
 
 # from https://github.com/facebookresearch/audiocraft/blob/896ec7c47f5e5d1e5aa1e4b260c4405328bf009d/audiocraft/models/encodec.py#L323
 class HFEncodecCompressionModel(BaseAudioTokenizer):
