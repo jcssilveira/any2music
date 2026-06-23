@@ -19,23 +19,13 @@ UPDATES = 100
 
 def test_delay_pattern():
     input_tensor = torch.tensor([
-        [0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0,],
-        [0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0,],
-        [0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0,],
-        [0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0,]
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0],
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0],
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0],
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0]
     ])
     input_tensor = input_tensor.unsqueeze(0)
     print(f"input_tensor shape:\n{input_tensor.shape}\n")
-
-    # if the padding token is 0
-    delayed_input_tensor = torch.tensor([
-        [0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0],
-        [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0],
-        [0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0],
-        [0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0]
-    ])
-    print(f"delayed_input_tensor shape:\n{delayed_input_tensor.shape}\n")
-    delayed_input_tensor = delayed_input_tensor.unsqueeze(0)
 
     hf_input_tensor, hf_delay_pattern_mask = DelayProvider.build_delay_pattern_mask(input_tensor, 0, 1504)
 
@@ -50,10 +40,13 @@ def test_delay_pattern():
 
     assert torch.equal(reverted_delay, input_tensor[:, :, :reverted_delay.shape[-1]])
 
+
 def test_musicgen_encodec():
     encodec = HFEncodecCompressionModel.get_pretrained('facebook/encodec_32khz').cuda()
     model = MusicGenTransformer(
             vocab_size=encodec.vocab_size,
+            pad_token_id=encodec.pad_token_id,
+            eos_token_id=encodec.eos_token_id,
             frame_rate=int(encodec.frame_rate),
             audio_duration=TEST_SECs,
             model_size=MusicGenSize.TEST
@@ -71,7 +64,8 @@ def test_musicgen_encodec():
         # Add padding so we don't loose the first token for the delay
         B, K, S = encoded_audio.shape
         padding = torch.full((B, K, 1), model.pad_token_id, dtype=torch.long, device='cuda')
-        encoded_audio = torch.cat([padding, encoded_audio], dim=-1)
+        eos = torch.full((B, K, 1), model.eos_token_id, dtype=torch.long, device='cuda')
+        encoded_audio = torch.cat([padding, encoded_audio, eos, padding, padding, padding], dim=-1)
         # encoded_audio shape: (Batch, Codebooks, SeqLen+1)
         print(f"encoded_audio.shape after padding: {encoded_audio.shape}\n")
 
@@ -122,7 +116,7 @@ def test_musicgen_encodec():
     print("Generating audio tokens...")
     audio_tokens = model.generate(
         src=None,
-        max_new_tokens=int(TEST_SECs * encodec.frame_rate)+encodec.num_codebooks,
+        max_new_tokens=model.max_seq_len,
         temperature=1e-4, # < 1 -> eliminate randomness | = 1 -> the distribution learned | > 1 -> aproximate a uniform distribution
         top_k=1
     )
@@ -141,6 +135,8 @@ def test_musicgen_dac():
     dac.set_num_codebooks(4)
     model = MusicGenTransformer(
         vocab_size=dac.vocab_size,
+        pad_token_id=dac.pad_token_id,
+        eos_token_id=dac.eos_token_id,
         frame_rate=int(dac.frame_rate),
         audio_duration=TEST_SECs,
         model_size=MusicGenSize.TEST
@@ -159,7 +155,8 @@ def test_musicgen_dac():
         # Add padding so we don't loose the first token for the delay
         B, K, S = encoded_audio.shape
         padding = torch.full((B, K, 1), model.pad_token_id, dtype=torch.long, device='cuda')
-        encoded_audio = torch.cat([padding, encoded_audio], dim=-1)
+        eos = torch.full((B, K, 1), model.eos_token_id, dtype=torch.long, device='cuda')
+        encoded_audio = torch.cat([padding, encoded_audio, eos, padding, padding, padding], dim=-1)
         # encoded_audio shape: (Batch, Codebooks, SeqLen+1)
         print(f"encoded_audio.shape after padding: {encoded_audio.shape}\n")
 
@@ -212,7 +209,7 @@ def test_musicgen_dac():
     with torch.no_grad():
         audio_tokens = model.generate(
             src=None,
-            max_new_tokens=math.ceil(TEST_SECs * dac.frame_rate)+dac.num_codebooks,
+            max_new_tokens=model.max_seq_len,
             temperature=1e-4, # < 1 -> eliminate randomness | = 1 -> the distribution learned | > 1 -> aproximate a uniform distribution
             top_k=1
         )
@@ -224,6 +221,8 @@ def test_musicgen_dac():
         decoded_audio = dac.decode(audio_tokens.cpu(), meta)
 
     print(f"Decoded audio shape: {decoded_audio.shape}")
+    total_generated_samples = audio_tokens.shape[-1] * dac.model.hop_length
+    meta['original_length'] = min(meta['original_length'], total_generated_samples)
     decoded_audio.write('test_musicgen_dac.wav')
 
     # TODO: KLD between the first 15s of the original song and the generated 15s -> should be a veeery small value
@@ -253,6 +252,8 @@ def test_musicgen_t5_dac():
     dac.set_num_codebooks(4)
     model = MusicGenTransformer(
         vocab_size=dac.vocab_size,
+        pad_token_id=dac.pad_token_id,
+        eos_token_id=dac.eos_token_id,
         frame_rate=int(dac.frame_rate),
         audio_duration=TEST_SECs,
         model_size=MusicGenSize.TEST
@@ -261,16 +262,21 @@ def test_musicgen_t5_dac():
     nes_audio_tensor = AudioSignal(AUDIO_PATH).to_mono()[:, :, :dac.sample_rate*TEST_SECs].cuda() # subsample & cuda
     snes_audio_tensor = AudioSignal(AUDIO_PATH_SNES).to_mono()[:, :, :dac.sample_rate*TEST_SECs].cuda() # subsample & cuda
 
+    print(f"nes_audio_tensor shape: {nes_audio_tensor.shape}\n")
+
     # Tokenize the audio
     with torch.no_grad():
         nes_encoded_audio, nes_meta = dac.encode(nes_audio_tensor)
         snes_encoded_audio, snes_meta = dac.encode(snes_audio_tensor)
 
-        # Add padding so we don't loose the first token for the delay
+        print(f"nes_encoded_audio shape: {nes_encoded_audio.shape}\n")
+
+        # Add padding so we don't loose the first and last tokens for the delay
         B, K, S = nes_encoded_audio.shape
         padding = torch.full((B, K, 1), model.pad_token_id, dtype=torch.long, device='cuda')
-        nes_encoded_audio = torch.cat([padding, nes_encoded_audio], dim=-1)
-        snes_encoded_audio = torch.cat([padding, snes_encoded_audio], dim=-1)
+        eos = torch.full((B, K, 1), model.eos_token_id, dtype=torch.long, device='cuda')
+        nes_encoded_audio = torch.cat([padding, nes_encoded_audio, eos, padding, padding, padding], dim=-1)
+        snes_encoded_audio = torch.cat([padding, snes_encoded_audio, eos, padding, padding, padding], dim=-1)
 
     # Apply the delay pattern for MusicGen
     # This shifts codebook 1 by 0, codebook 2 by 1, codebook 3 by 2, etc.
@@ -286,6 +292,9 @@ def test_musicgen_t5_dac():
         max_length=snes_encoded_audio.shape[-1] + model.num_codebooks,
         audio_channels=1
     )
+
+    print(f"nes_delayed_audio shape: {nes_delayed_audio.shape}\n")
+    print(f"nes_delayed_audio: {nes_delayed_audio[:, :, -4:]}\n")
 
     # Create Inputs and Labels (shifted by 1)
     # Input is everything except the very last timestep
@@ -331,15 +340,19 @@ def test_musicgen_t5_dac():
             print(f"Generating audio tokens for {name}...")
             audio_tokens = model.generate(
                 src=src,
-                max_new_tokens=math.ceil(TEST_SECs * dac.frame_rate)+dac.num_codebooks,
+                max_new_tokens=model.max_seq_len,
                 temperature=1e-4, # < 1 -> eliminate randomness | = 1 -> the distribution learned | > 1 -> aproximate a uniform distribution
                 top_k=1
             )
 
             print(f"Generate audio codes shape: {audio_tokens.shape}\n")
+            print(f"padding and eos: {model.pad_token_id} {model.eos_token_id}\n")
+            print(f"Generate audio final codes: {audio_tokens[:, :, -4:]}\n")
 
             # Decode back to audio
             with torch.no_grad():
+                total_generated_samples = audio_tokens.shape[-1] * dac.model.hop_length
+                meta['original_length'] = min(meta['original_length'], total_generated_samples)
                 decoded_audio = dac.decode(audio_tokens.cpu(), meta)
 
             print(f"Decoded audio shape: {decoded_audio.shape}")

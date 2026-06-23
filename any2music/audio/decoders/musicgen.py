@@ -233,6 +233,8 @@ class MusicGenTransformer(BaseDecoder):
     def __init__(
             self, 
             vocab_size:int,
+            pad_token_id,
+            eos_token_id,
             frame_rate:int,
             audio_duration:int,
             encoder:tp.Optional[nn.TransformerEncoder] = None,
@@ -241,10 +243,11 @@ class MusicGenTransformer(BaseDecoder):
         ):
         super().__init__()
         self.size_params = MUSICGEN_SIZES[model_size.value]
-        self.vocab_size = vocab_size + 1 # must match the codebook size used in the neural encoder + 1 for padding
-        self.pad_token_id: int = vocab_size # starts counting from 0
+        self.vocab_size = vocab_size
+        self.pad_token_id = pad_token_id
+        self.eos_token_id = eos_token_id
         self.num_codebooks = 4
-        self.max_seq_len = frame_rate*audio_duration+self.num_codebooks # frame_rate * audio_duration + embedding_dim (for the delay_pattern) -> 50 * 30 + 4 -> 1504
+        self.max_seq_len = frame_rate*audio_duration+self.num_codebooks+4 # frame_rate * audio_duration + embedding_dim (for the delay_pattern) + EOS + 3 paddings
         self.dtype = dtype
 
         # Separate embedding layers for each codebook
@@ -295,8 +298,6 @@ class MusicGenTransformer(BaseDecoder):
         if src is not None and self.encoder is None and not drop_conditioning:
             memory = src
             # print(f"Memory came ready w/o need to encode: {memory.shape}\n")
-
-        # TODO: Do we need a biderectional encoder mask?
 
         # Get embeddings per codebook
         dec_embs = torch.zeros(B, S, self.size_params.d_model, device=tgt.device, dtype=self.dtype)
@@ -393,6 +394,9 @@ class MusicGenTransformer(BaseDecoder):
             # We reshape to (B * K, vocab_size) to use multinomial sampling efficiently
             probs_flat = probs.view(B * K, -1)
             next_tokens_flat = torch.multinomial(probs_flat, num_samples=1)
+
+            if [self.eos_token_id] in next_tokens_flat.tolist():
+                break
 
             # Reshape back to (B, K, 1)
             next_tokens = next_tokens_flat.view(B, K, 1)

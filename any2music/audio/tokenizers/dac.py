@@ -79,7 +79,7 @@ class DACCompressionModel(BaseAudioTokenizer):
         return max(self.possible_num_codebooks)
     
     @property
-    def vocab_size(self) -> int:
+    def orig_vocab_size(self) -> int:
         return self.model.codebook_size
 
     def set_num_codebooks(self, n: int):

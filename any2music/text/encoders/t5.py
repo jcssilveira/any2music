@@ -99,6 +99,7 @@ class T5Conditioner(BaseConditioner):
         inputs = self.t5_tokenizer(entries, return_tensors='pt', padding=True).to(self.device)
         mask = inputs['attention_mask']
         mask[empty_idx, :] = 0  # zero-out index where the input is non-existant
+
         return inputs
 
     def forward(self, inputs: tp.Dict[str, torch.Tensor]):

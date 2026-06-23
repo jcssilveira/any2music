@@ -63,8 +63,21 @@ class BaseAudioTokenizer(ABC, nn.Module):
         ...
 
     @property
-    def vocab_size(self) -> int:
+    def orig_vocab_size(self) -> int:
         ...
+
+    @property
+    def vocab_size(self) -> int:
+        """ The original vocab_size + special tokens such as padding and EOS """
+        return self.orig_vocab_size + 2
+
+    @property
+    def pad_token_id(self) -> int:
+        return self.vocab_size - 1
+
+    @property
+    def eos_token_id(self) -> int:
+        return self.vocab_size - 2
 
     @abstractmethod
     def set_num_codebooks(self, n: int):

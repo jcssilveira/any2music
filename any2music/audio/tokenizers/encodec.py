@@ -91,5 +91,5 @@ class HFEncodecCompressionModel(BaseAudioTokenizer):
         self._num_codebooks = n
 
     @property
-    def vocab_size(self) -> int:
+    def orig_vocab_size(self) -> int:
         return self.model.config.codebook_size
