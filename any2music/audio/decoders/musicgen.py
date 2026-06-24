@@ -235,6 +235,7 @@ class MusicGenTransformer(BaseDecoder):
             vocab_size:int,
             pad_token_id,
             eos_token_id,
+            bos_token_id,
             frame_rate:int,
             audio_duration:int,
             encoder:tp.Optional[nn.TransformerEncoder] = None,
@@ -246,8 +247,9 @@ class MusicGenTransformer(BaseDecoder):
         self.vocab_size = vocab_size
         self.pad_token_id = pad_token_id
         self.eos_token_id = eos_token_id
+        self.bos_token_id = bos_token_id
         self.num_codebooks = 4
-        self.max_seq_len = frame_rate*audio_duration+self.num_codebooks+4 # frame_rate * audio_duration + embedding_dim (for the delay_pattern) + EOS + 3 paddings
+        self.max_seq_len = frame_rate*audio_duration+self.num_codebooks+5 # frame_rate * audio_duration + num_codebooks (for the delay_pattern) + BOS + EOS + 3 paddings
         self.dtype = dtype
 
         # Separate embedding layers for each codebook
@@ -354,8 +356,8 @@ class MusicGenTransformer(BaseDecoder):
         B = src.shape[0] if src is not None else 1
         K = self.num_codebooks
 
-        # Initialize the target tensor with padding tokens (acts as the BOS token setup)
-        tgt = torch.full((B, K, 1), self.pad_token_id, dtype=torch.long, device=device)
+        # Initialize the target tensor with BOS token
+        tgt = torch.full((B, K, 1), self.bos_token_id, dtype=torch.long, device=device)
 
         for step in range(max_new_tokens):
             # Forward pass

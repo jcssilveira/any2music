@@ -47,6 +47,7 @@ def test_musicgen_encodec():
             vocab_size=encodec.vocab_size,
             pad_token_id=encodec.pad_token_id,
             eos_token_id=encodec.eos_token_id,
+            bos_token_id=encodec.bos_token_id,
             frame_rate=int(encodec.frame_rate),
             audio_duration=TEST_SECs,
             model_size=MusicGenSize.TEST
@@ -61,13 +62,22 @@ def test_musicgen_encodec():
         encoded_audio, scale = encodec.encode(audio_tensor)
         print(f"encoded_audio.shape: {encoded_audio.shape}\n")
 
-        # Add padding so we don't loose the first token for the delay
+        # Add special tokens
         B, K, S = encoded_audio.shape
-        padding = torch.full((B, K, 1), model.pad_token_id, dtype=torch.long, device='cuda')
-        eos = torch.full((B, K, 1), model.eos_token_id, dtype=torch.long, device='cuda')
-        encoded_audio = torch.cat([padding, encoded_audio, eos, padding, padding, padding], dim=-1)
-        # encoded_audio shape: (Batch, Codebooks, SeqLen+1)
-        print(f"encoded_audio.shape after padding: {encoded_audio.shape}\n")
+        max_audio_tokens = int(encodec.frame_rate*TEST_SECs)
+    
+        bos = torch.full((B, K, 1), encodec.eos_token_id, dtype=torch.long, device='cuda')
+        eos = torch.full((B, K, 1), encodec.eos_token_id, dtype=torch.long, device='cuda')
+        padding = torch.full((B, K, 1), encodec.pad_token_id, dtype=torch.long, device='cuda')
+
+        min_padding = encodec.num_codebooks-1 + 2 #  num_codebooks -1 for the delay pattern +2 for bos and eos
+        padding_size = max_audio_tokens - (S + min_padding)
+        padding_size = max(min_padding, padding_size)
+
+        final_padding = padding.expand((-1, -1, padding_size)) 
+        encoded_audio = torch.cat([bos, encoded_audio[:, :, :max_audio_tokens], eos, final_padding], dim=-1)
+
+        print(f"encoded_audio.shape after padding: {encoded_audio.shape} | padding size: {padding_size} | max tokens {max_audio_tokens}\n")
 
     # Apply the delay pattern for MusicGen
     # This shifts codebook 1 by 0, codebook 2 by 1, codebook 3 by 2, etc.
@@ -137,6 +147,7 @@ def test_musicgen_dac():
         vocab_size=dac.vocab_size,
         pad_token_id=dac.pad_token_id,
         eos_token_id=dac.eos_token_id,
+        bos_token_id=dac.bos_token_id,
         frame_rate=int(dac.frame_rate),
         audio_duration=TEST_SECs,
         model_size=MusicGenSize.TEST
@@ -152,12 +163,21 @@ def test_musicgen_dac():
         print(f"encoded_audio.shape: {encoded_audio.shape}\n")
         print(f"encoded_audio meta: {meta}\n")
 
-        # Add padding so we don't loose the first token for the delay
+        # Add special tokens
         B, K, S = encoded_audio.shape
-        padding = torch.full((B, K, 1), model.pad_token_id, dtype=torch.long, device='cuda')
-        eos = torch.full((B, K, 1), model.eos_token_id, dtype=torch.long, device='cuda')
-        encoded_audio = torch.cat([padding, encoded_audio, eos, padding, padding, padding], dim=-1)
-        # encoded_audio shape: (Batch, Codebooks, SeqLen+1)
+        max_audio_tokens = int(dac.frame_rate*TEST_SECs)
+    
+        bos = torch.full((B, K, 1), dac.eos_token_id, dtype=torch.long, device='cuda')
+        eos = torch.full((B, K, 1), dac.eos_token_id, dtype=torch.long, device='cuda')
+        padding = torch.full((B, K, 1), dac.pad_token_id, dtype=torch.long, device='cuda')
+
+        min_padding = dac.num_codebooks-1 + 2 #  num_codebooks -1 for the delay pattern +2 for bos and eos
+        padding_size = max_audio_tokens - (S + min_padding)
+        padding_size = max(min_padding, padding_size)
+
+        final_padding = padding.expand((-1, -1, padding_size)) 
+        encoded_audio = torch.cat([bos, encoded_audio[:, :, :max_audio_tokens], eos, final_padding], dim=-1)
+
         print(f"encoded_audio.shape after padding: {encoded_audio.shape}\n")
 
     # Apply the delay pattern for MusicGen
@@ -254,6 +274,7 @@ def test_musicgen_t5_dac():
         vocab_size=dac.vocab_size,
         pad_token_id=dac.pad_token_id,
         eos_token_id=dac.eos_token_id,
+        bos_token_id=dac.bos_token_id,
         frame_rate=int(dac.frame_rate),
         audio_duration=TEST_SECs,
         model_size=MusicGenSize.TEST
@@ -271,12 +292,27 @@ def test_musicgen_t5_dac():
 
         print(f"nes_encoded_audio shape: {nes_encoded_audio.shape}\n")
 
-        # Add padding so we don't loose the first and last tokens for the delay
+        # Add special tokens
         B, K, S = nes_encoded_audio.shape
-        padding = torch.full((B, K, 1), model.pad_token_id, dtype=torch.long, device='cuda')
-        eos = torch.full((B, K, 1), model.eos_token_id, dtype=torch.long, device='cuda')
-        nes_encoded_audio = torch.cat([padding, nes_encoded_audio, eos, padding, padding, padding], dim=-1)
-        snes_encoded_audio = torch.cat([padding, snes_encoded_audio, eos, padding, padding, padding], dim=-1)
+        max_audio_tokens = int(dac.frame_rate*TEST_SECs)
+    
+        bos = torch.full((B, K, 1), dac.eos_token_id, dtype=torch.long, device='cuda')
+        eos = torch.full((B, K, 1), dac.eos_token_id, dtype=torch.long, device='cuda')
+        padding = torch.full((B, K, 1), dac.pad_token_id, dtype=torch.long, device='cuda')
+
+        min_padding = dac.num_codebooks-1 + 2 #  num_codebooks -1 for the delay pattern +2 for bos and eos
+        padding_size = max_audio_tokens - (S + min_padding)
+        padding_size = max(min_padding, padding_size)
+
+        final_padding = padding.expand((-1, -1, padding_size)) 
+        nes_encoded_audio = torch.cat([bos, nes_encoded_audio[:, :, :max_audio_tokens], eos, final_padding], dim=-1)
+
+        B, K, S = snes_encoded_audio.shape
+        padding_size = max_audio_tokens - (S + min_padding) # +2 for bos and eos + min_padding
+        padding_size = max(min_padding, padding_size)
+
+        final_padding = padding.expand((-1, -1, padding_size)) 
+        snes_encoded_audio = torch.cat([bos, snes_encoded_audio[:, :, :max_audio_tokens], eos, final_padding], dim=-1)
 
     # Apply the delay pattern for MusicGen
     # This shifts codebook 1 by 0, codebook 2 by 1, codebook 3 by 2, etc.
