@@ -142,7 +142,8 @@ class DelayProvider():
             torch.ones((channel_codebooks, max_length), dtype=torch.bool), diagonal=max_length - channel_codebooks + 1
         )
         # then fill the lower triangular part (the BOS padding)
-        delay_pattern = delay_pattern + torch.tril(torch.ones((channel_codebooks, max_length), dtype=torch.bool))
+        # delay_pattern = delay_pattern + torch.tril(torch.ones((channel_codebooks, max_length), dtype=torch.bool))
+        delay_pattern = delay_pattern | torch.tril(torch.ones((channel_codebooks, max_length), dtype=torch.bool), diagonal=-1)
 
         if audio_channels == 2:
             # for left/right channel we need to duplicate every row of the pattern mask in an interleaved fashion
@@ -368,18 +369,27 @@ class MusicGenTransformer(BaseDecoder):
             # next_token_logits shape: (B, K, vocab_size)
             next_token_logits = logits[:, :, -1, :]
 
-            # Programatically setting the delay pattern for the padding tokens
+            # Programatically setting the delay pattern for the padding and bos tokens
             for k in range(K):
-                if step < k:
-                    # Force padding token
-                    # 0;0 | 0;1 | 0;2 | 0;3  => a, P, P, P
-                    # 1;0 | 1;1 | 1;2 | 1;3  => a, b, P, P ...
+                if step <= k:
+                    # Force bos token
+                    # 0;0 | 0;1 | 0;2 | 0;3  => bos, P, P, P
+                    # 1;0 | 1;1 | 1;2 | 1;3  => P, bos, P, P ...
+                    # 2;0 | 2;1 | 2;2 | 2;3  => P, P, bos, P ...
+                    # 3;0 | 3;1 | 3;2 | 3;3  => P, P, P, bos ...
                     mask = torch.ones(self.vocab_size, dtype=torch.bool, device=device)
-                    mask[self.pad_token_id] = False
+
+                    # diagonals will be bos
+                    if step == k:
+                        mask[self.bos_token_id] = False
+                    else:
+                        mask[self.pad_token_id] = False
+
                     next_token_logits[:, k, mask] = -float("inf")
                 else:
-                    # Prevent padding token
+                    # Prevent padding and bos token
                     next_token_logits[:, k, self.pad_token_id] = -float("inf")
+                    next_token_logits[:, k, self.bos_token_id] = -float("inf")
 
             # TODO: ClassifierFreeGuidanceLogitsProcessor
 
@@ -402,15 +412,17 @@ class MusicGenTransformer(BaseDecoder):
 
             # Reshape back to (B, K, 1)
             next_tokens = next_tokens_flat.view(B, K, 1)
-            # print(f"----> Generate Next Tokens are: {next_tokens} ") #TODO REMOVE
 
             # Append the newly generated tokens to the sequence
             tgt = torch.cat([tgt, next_tokens], dim=-1)
 
-        # Remove the initial padding token we used to kickstart the generation
+        # Remove the initial bos token we used to kickstart the generation
         tgt = tgt[:, :, 1:]
 
         # Realign the codebooks to fix the delay pattern offset
         aligned_audio_tokens = DelayProvider.revert_delay_pattern(tgt)
+
+        # Remove the initial bos token we used to kickstart the generation
+        aligned_audio_tokens = aligned_audio_tokens[:, :, 1:]
 
         return aligned_audio_tokens

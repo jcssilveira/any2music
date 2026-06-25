@@ -58,9 +58,10 @@ def tokenize_audio(wav:tp.Union[str, torch.Tensor], audio_secs:int, audio_tokeni
     # Add special tokens
     B, K, S = encoded_audio.shape
 
-    bos = torch.full((B, K, 1), audio_tokenizer.eos_token_id, dtype=torch.long, device='cuda')
+    bos = torch.full((B, K, 1), audio_tokenizer.bos_token_id, dtype=torch.long, device='cuda')
     eos = torch.full((B, K, 1), audio_tokenizer.eos_token_id, dtype=torch.long, device='cuda')
     padding = torch.full((B, K, 1), audio_tokenizer.pad_token_id, dtype=torch.long, device='cuda')
+    print(f"padding: {audio_tokenizer.pad_token_id} |  eos: {audio_tokenizer.eos_token_id} | bos: {audio_tokenizer.bos_token_id} \n")
 
     min_padding = audio_tokenizer.num_codebooks-1 #  num_codebooks -1 for the delay pattern
     delta = max_audio_tokens - S
@@ -305,7 +306,6 @@ def test_musicgen_t5_dac():
             )
 
             print(f"Generate audio codes shape: {audio_tokens.shape}\n")
-            print(f"padding and eos: {model.pad_token_id} {model.eos_token_id}\n")
             print(f"Generate audio final codes: {audio_tokens[:, :, -4:]}\n")
 
             # Decode back to audio
