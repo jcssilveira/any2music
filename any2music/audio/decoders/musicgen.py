@@ -281,7 +281,7 @@ class MusicGenTransformer(BaseDecoder):
         # CFT learnable "null" context vector representing the absence of conditioning
         self.null_memory = nn.Parameter(torch.randn(1, 1, self.size_params.d_model, dtype=self.dtype)) # (1 batch, 1 seq_len, d_model)
 
-    def forward(self, src, tgt, drop_conditioning=False):
+    def forward(self, src, tgt, drop_conditioning=False, src_mask=None):
         B, K, S = tgt.shape
         # print(f"\nTarget shape: {tgt.shape}\n")
         #if src is not None: print(f"Src shape: {src.shape}\n")
@@ -289,17 +289,19 @@ class MusicGenTransformer(BaseDecoder):
         # CFG condition routing
         ## Conditional path: Run standard encoder
         if src is not None and self.encoder is not None and not drop_conditioning:
-            memory = self.encoder(src)
+            memory, memory_mask = self.encoder(src)
             # print(f"Memory came from encoder with shape: {memory.shape}\n")
 
         ## Unconditional path: Broadcast the learned null token across the batch
-        if self.encoder is None and src is None or drop_conditioning:
+        elif self.encoder is None and src is None or drop_conditioning:
             memory = self.null_memory.expand(B, 1, -1)
+            memory_mask = None
             # print(f"Memory is null, with shape: {memory.shape}\n")
 
         ## Conditional path when the src comes already encoded 
-        if src is not None and self.encoder is None and not drop_conditioning:
+        elif src is not None and self.encoder is None and not drop_conditioning:
             memory = src
+            memory_mask = src_mask
             # print(f"Memory came ready w/o need to encode: {memory.shape}\n")
 
         # Get embeddings per codebook
@@ -316,7 +318,7 @@ class MusicGenTransformer(BaseDecoder):
         # print(f"Got target mask with shape: {dec_embs.shape}")
         # print(f"Target mask:\n{tgt_mask}\n")
 
-        out = self.decoder(tgt=dec_embs, memory=memory, tgt_mask=tgt_mask)
+        out = self.decoder(tgt=dec_embs, memory=memory, tgt_mask=tgt_mask, memory_key_padding_mask=memory_mask)
         #print(f"Got decoder output with shape:{out.shape}\n")
         # print(f"Got decoder output:\n{out}\n")
 
@@ -342,6 +344,7 @@ class MusicGenTransformer(BaseDecoder):
         self,
         max_new_tokens: int,
         src: tp.Optional[torch.Tensor] = None,
+        src_mask=None,
         temperature: float = 1.0,
         top_k: int = 250,
     ):
@@ -363,7 +366,7 @@ class MusicGenTransformer(BaseDecoder):
         for step in range(max_new_tokens):
             # Forward pass
             # logits shape: (B, K, S, vocab_size)
-            logits = self(src=src, tgt=tgt)
+            logits = self(src=src, tgt=tgt, src_mask=src_mask)
 
             # Extract logits from the last step in the sequence
             # next_token_logits shape: (B, K, vocab_size)
