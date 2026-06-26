@@ -18,6 +18,8 @@ conda create -n any2music python=3.10.12
 conda activate any2music
 git clone https://github.com/FelipeMarra/any2music.git
 python3 -m pip install -e ./any2music --extra-index-url https://download.pytorch.org/whl/cu126
+conda install conda-forge::ffmpeg
+conda install -c conda-forge ffmpeg --update-all
 ```
 
 ## Testing

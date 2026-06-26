@@ -142,7 +142,8 @@ class DelayProvider():
             torch.ones((channel_codebooks, max_length), dtype=torch.bool), diagonal=max_length - channel_codebooks + 1
         )
         # then fill the lower triangular part (the BOS padding)
-        delay_pattern = delay_pattern + torch.tril(torch.ones((channel_codebooks, max_length), dtype=torch.bool))
+        # delay_pattern = delay_pattern + torch.tril(torch.ones((channel_codebooks, max_length), dtype=torch.bool))
+        delay_pattern = delay_pattern | torch.tril(torch.ones((channel_codebooks, max_length), dtype=torch.bool), diagonal=-1)
 
         if audio_channels == 2:
             # for left/right channel we need to duplicate every row of the pattern mask in an interleaved fashion
@@ -233,6 +234,9 @@ class MusicGenTransformer(BaseDecoder):
     def __init__(
             self, 
             vocab_size:int,
+            pad_token_id,
+            eos_token_id,
+            bos_token_id,
             frame_rate:int,
             audio_duration:int,
             encoder:tp.Optional[nn.TransformerEncoder] = None,
@@ -241,10 +245,12 @@ class MusicGenTransformer(BaseDecoder):
         ):
         super().__init__()
         self.size_params = MUSICGEN_SIZES[model_size.value]
-        self.vocab_size = vocab_size + 1 # must match the codebook size used in the neural encoder + 1 for padding
-        self.pad_token_id: int = vocab_size # starts counting from 0
+        self.vocab_size = vocab_size
+        self.pad_token_id = pad_token_id
+        self.eos_token_id = eos_token_id
+        self.bos_token_id = bos_token_id
         self.num_codebooks = 4
-        self.max_seq_len = frame_rate*audio_duration+self.num_codebooks # frame_rate * audio_duration + embedding_dim (for the delay_pattern) -> 50 * 30 + 4 -> 1504
+        self.max_seq_len = frame_rate*audio_duration+self.num_codebooks+5 # frame_rate * audio_duration + num_codebooks (for the delay_pattern) + BOS + EOS + 3 paddings
         self.dtype = dtype
 
         # Separate embedding layers for each codebook
@@ -275,7 +281,7 @@ class MusicGenTransformer(BaseDecoder):
         # CFT learnable "null" context vector representing the absence of conditioning
         self.null_memory = nn.Parameter(torch.randn(1, 1, self.size_params.d_model, dtype=self.dtype)) # (1 batch, 1 seq_len, d_model)
 
-    def forward(self, src, tgt, drop_conditioning=False):
+    def forward(self, src, tgt, drop_conditioning=False, src_mask=None):
         B, K, S = tgt.shape
         # print(f"\nTarget shape: {tgt.shape}\n")
         #if src is not None: print(f"Src shape: {src.shape}\n")
@@ -283,20 +289,20 @@ class MusicGenTransformer(BaseDecoder):
         # CFG condition routing
         ## Conditional path: Run standard encoder
         if src is not None and self.encoder is not None and not drop_conditioning:
-            memory = self.encoder(src)
+            memory, memory_mask = self.encoder(src)
             # print(f"Memory came from encoder with shape: {memory.shape}\n")
 
         ## Unconditional path: Broadcast the learned null token across the batch
-        if self.encoder is None and src is None or drop_conditioning:
+        elif self.encoder is None and src is None or drop_conditioning:
             memory = self.null_memory.expand(B, 1, -1)
+            memory_mask = None
             # print(f"Memory is null, with shape: {memory.shape}\n")
 
         ## Conditional path when the src comes already encoded 
-        if src is not None and self.encoder is None and not drop_conditioning:
+        elif src is not None and self.encoder is None and not drop_conditioning:
             memory = src
+            memory_mask = src_mask
             # print(f"Memory came ready w/o need to encode: {memory.shape}\n")
-
-        # TODO: Do we need a biderectional encoder mask?
 
         # Get embeddings per codebook
         dec_embs = torch.zeros(B, S, self.size_params.d_model, device=tgt.device, dtype=self.dtype)
@@ -312,7 +318,7 @@ class MusicGenTransformer(BaseDecoder):
         # print(f"Got target mask with shape: {dec_embs.shape}")
         # print(f"Target mask:\n{tgt_mask}\n")
 
-        out = self.decoder(tgt=dec_embs, memory=memory, tgt_mask=tgt_mask)
+        out = self.decoder(tgt=dec_embs, memory=memory, tgt_mask=tgt_mask, memory_key_padding_mask=memory_mask)
         #print(f"Got decoder output with shape:{out.shape}\n")
         # print(f"Got decoder output:\n{out}\n")
 
@@ -338,6 +344,7 @@ class MusicGenTransformer(BaseDecoder):
         self,
         max_new_tokens: int,
         src: tp.Optional[torch.Tensor] = None,
+        src_mask=None,
         temperature: float = 1.0,
         top_k: int = 250,
     ):
@@ -353,30 +360,39 @@ class MusicGenTransformer(BaseDecoder):
         B = src.shape[0] if src is not None else 1
         K = self.num_codebooks
 
-        # Initialize the target tensor with padding tokens (acts as the BOS token setup)
-        tgt = torch.full((B, K, 1), self.pad_token_id, dtype=torch.long, device=device)
+        # Initialize the target tensor with BOS token
+        tgt = torch.full((B, K, 1), self.bos_token_id, dtype=torch.long, device=device)
 
         for step in range(max_new_tokens):
             # Forward pass
             # logits shape: (B, K, S, vocab_size)
-            logits = self(src=src, tgt=tgt)
+            logits = self(src=src, tgt=tgt, src_mask=src_mask)
 
             # Extract logits from the last step in the sequence
             # next_token_logits shape: (B, K, vocab_size)
             next_token_logits = logits[:, :, -1, :]
 
-            # Programatically setting the delay pattern for the padding tokens
+            # Programatically setting the delay pattern for the padding and bos tokens
             for k in range(K):
-                if step < k:
-                    # Force padding token
-                    # 0;0 | 0;1 | 0;2 | 0;3  => a, P, P, P
-                    # 1;0 | 1;1 | 1;2 | 1;3  => a, b, P, P ...
+                if step <= k:
+                    # Force bos token
+                    # 0;0 | 0;1 | 0;2 | 0;3  => bos, P, P, P
+                    # 1;0 | 1;1 | 1;2 | 1;3  => P, bos, P, P ...
+                    # 2;0 | 2;1 | 2;2 | 2;3  => P, P, bos, P ...
+                    # 3;0 | 3;1 | 3;2 | 3;3  => P, P, P, bos ...
                     mask = torch.ones(self.vocab_size, dtype=torch.bool, device=device)
-                    mask[self.pad_token_id] = False
+
+                    # diagonals will be bos
+                    if step == k:
+                        mask[self.bos_token_id] = False
+                    else:
+                        mask[self.pad_token_id] = False
+
                     next_token_logits[:, k, mask] = -float("inf")
                 else:
-                    # Prevent padding token
+                    # Prevent padding and bos token
                     next_token_logits[:, k, self.pad_token_id] = -float("inf")
+                    next_token_logits[:, k, self.bos_token_id] = -float("inf")
 
             # TODO: ClassifierFreeGuidanceLogitsProcessor
 
@@ -394,17 +410,22 @@ class MusicGenTransformer(BaseDecoder):
             probs_flat = probs.view(B * K, -1)
             next_tokens_flat = torch.multinomial(probs_flat, num_samples=1)
 
+            if [self.eos_token_id] in next_tokens_flat.tolist():
+                break
+
             # Reshape back to (B, K, 1)
             next_tokens = next_tokens_flat.view(B, K, 1)
-            # print(f"----> Generate Next Tokens are: {next_tokens} ") #TODO REMOVE
 
             # Append the newly generated tokens to the sequence
             tgt = torch.cat([tgt, next_tokens], dim=-1)
 
-        # Remove the initial padding token we used to kickstart the generation
+        # Remove the initial bos token we used to kickstart the generation
         tgt = tgt[:, :, 1:]
 
         # Realign the codebooks to fix the delay pattern offset
         aligned_audio_tokens = DelayProvider.revert_delay_pattern(tgt)
+
+        # Remove the initial bos token we used to kickstart the generation
+        aligned_audio_tokens = aligned_audio_tokens[:, :, 1:]
 
         return aligned_audio_tokens

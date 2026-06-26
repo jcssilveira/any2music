@@ -81,7 +81,7 @@ class T5Conditioner(BaseConditioner):
         # if normalize_text:
         #     self.text_normalizer = WhiteSpaceTokenizer(1, lemma=True, stopwords=True)
 
-    def tokenize(self, x: tp.List[tp.Optional[str]]) -> tp.Dict[str, torch.Tensor]:
+    def tokenize(self, x: tp.List[tp.Optional[str]], max_length:int=128) -> tp.Dict[str, torch.Tensor]:
         # if current sample doesn't have a certain attribute, replace with empty string
         entries: tp.List[str] = [xi if xi is not None else "" for xi in x]
         # if self.normalize_text:
@@ -96,9 +96,17 @@ class T5Conditioner(BaseConditioner):
 
         empty_idx = torch.LongTensor([i for i, xi in enumerate(entries) if xi == ""])
 
-        inputs = self.t5_tokenizer(entries, return_tensors='pt', padding=True).to(self.device)
+        inputs = self.t5_tokenizer(
+            entries, 
+            return_tensors='pt', 
+            padding='max_length', 
+            max_length=max_length,       # Force all batches to this exact length
+            truncation=True       # Cut off anything longer than 128
+        ).to(self.device)
+
         mask = inputs['attention_mask']
         mask[empty_idx, :] = 0  # zero-out index where the input is non-existant
+
         return inputs
 
     def forward(self, inputs: tp.Dict[str, torch.Tensor]):
