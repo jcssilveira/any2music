@@ -310,6 +310,7 @@ def test_musicgen_t5_dac():
 
             # Decode back to audio
             with torch.no_grad():
+                audio_tokens = torch.clamp(audio_tokens, min=0, max=dac.orig_vocab_size - 1)
                 total_generated_samples = audio_tokens.shape[-1] * dac.model.hop_length
                 meta['original_length'] = min(meta['original_length'], total_generated_samples)
                 decoded_audio = dac.decode(audio_tokens.cpu(), meta)

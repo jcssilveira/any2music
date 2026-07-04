@@ -182,8 +182,7 @@ class TextGenTransformer(BaseDecoder):
             # print(f"Memory came ready w/o need to encode: {memory.shape}\n")
 
         # Get embeddings
-        dec_embs = torch.zeros(B, S, self.size_params.d_model, device=tgt.device, dtype=self.dtype)
-        dec_embs += self.dec_embedding_layer(tgt)
+        dec_embs = self.dec_embedding_layer(tgt)
 
         # Scale and positional embedding
         dec_embs = dec_embs * math.sqrt(self.size_params.d_model) + self.pos_embedding(tgt).to(self.dtype)
@@ -222,7 +221,8 @@ class TextGenTransformer(BaseDecoder):
         src: tp.Optional[torch.Tensor] = None,
         src_mask=None,
         temperature: float = 1.0,
-        top_k: int = 250,
+        cfg_scale: float = 3.0, # Added CFG weight
+        top_k: int = 250
     ):
         """
         Autoregressive generation loop for MusicGen.
@@ -239,9 +239,13 @@ class TextGenTransformer(BaseDecoder):
         tgt = torch.full((B, 1), self.bos_token_id, dtype=torch.long, device=device)
 
         for _ in range(max_new_tokens):
-            # Forward pass
-            # logits shape: (B, S, vocab_size)
-            logits = self(src=src, tgt=tgt, src_mask=src_mask)
+            # Implement CFG with a dual forward pass
+            if src is not None:
+                logits_cond = self(src=src, tgt=tgt, src_mask=src_mask)
+                logits_uncond = self(src=None, tgt=tgt, drop_conditioning=True)
+                logits = logits_uncond + cfg_scale * (logits_cond - logits_uncond)
+            else:
+                logits = self(src=None, tgt=tgt, drop_conditioning=True)
 
             # Extract logits from the last step in the sequence
             # next_token_logits shape: (B, S, vocab_size)

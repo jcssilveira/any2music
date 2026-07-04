@@ -348,85 +348,69 @@ class MusicGenTransformer(BaseDecoder):
         src_mask=None,
         temperature: float = 1.0,
         top_k: int = 250,
+        cfg_scale: float = 3.0 # Added CFG weight
     ):
-        """
-        Autoregressive generation loop for MusicGen.
-        """
         self.eval()
-
-        # Dynamically get the device the model is currently on
         device = next(self.parameters()).device
-
-        # Determine batch size from the conditioning source, or default to 1
         B = src.shape[0] if src is not None else 1
         K = self.num_codebooks
 
-        # Initialize the target tensor with BOS token
-        tgt = torch.full((B, K, 1), self.bos_token_id, dtype=torch.long, device=device)
+        # Initialize tgt exactly like the delayed training data (Step 0)
+        tgt = torch.full((B, K, 1), self.pad_token_id, dtype=torch.long, device=device)
+        tgt[:, 0, 0] = self.bos_token_id
 
         for step in range(max_new_tokens):
-            # Forward pass
-            # logits shape: (B, K, S, vocab_size)
-            logits = self(src=src, tgt=tgt, src_mask=src_mask)
+            # Implement CFG with a dual forward pass
+            if src is not None:
+                logits_cond = self(src=src, tgt=tgt, src_mask=src_mask)
+                logits_uncond = self(src=None, tgt=tgt, drop_conditioning=True)
+                logits = logits_uncond + cfg_scale * (logits_cond - logits_uncond)
+            else:
+                logits = self(src=None, tgt=tgt, drop_conditioning=True)
 
-            # Extract logits from the last step in the sequence
-            # next_token_logits shape: (B, K, S, vocab_size)
             next_token_logits = logits[:, :, -1, :]
 
-            # Programatically setting the delay pattern for the padding and bos tokens
+            # Loop logic to force delayed BOS and PAD tokens
             for k in range(K):
-                if step <= k:
-                    # Force bos token
-                    # 0;0 | 0;1 | 0;2 | 0;3  => bos, P, P, P
-                    # 1;0 | 1;1 | 1;2 | 1;3  => P, bos, P, P ...
-                    # 2;0 | 2;1 | 2;2 | 2;3  => P, P, bos, P ...
-                    # 3;0 | 3;1 | 3;2 | 3;3  => P, P, P, bos ...
+                if step < k:
                     mask = torch.ones(self.vocab_size, dtype=torch.bool, device=device)
-
-                    # diagonals will be bos
-                    if step == k:
+                    # We force BOS exactly one step before the codebook starts outputting audio
+                    if step == k - 1:
                         mask[self.bos_token_id] = False
                     else:
                         mask[self.pad_token_id] = False
-
                     next_token_logits[:, k, mask] = -float("inf")
                 else:
-                    # Prevent padding and bos token
+                    # Prevent padding and bos token once audio generation has started
                     next_token_logits[:, k, self.pad_token_id] = -float("inf")
                     next_token_logits[:, k, self.bos_token_id] = -float("inf")
 
-            # TODO: ClassifierFreeGuidanceLogitsProcessor
-
-            # Apply Temperature scaling
             next_token_logits = next_token_logits / temperature
-
-            # Top-K Filtering
             next_token_logits = self.top_k_filtering(next_token_logits, top_k=top_k)
-
-            # Convert to probabilities
             probs = F.softmax(next_token_logits, dim=-1)
 
-            # Sample from the distribution for each codebook
-            # We reshape to (B * K, vocab_size) to use multinomial sampling efficiently
             probs_flat = probs.view(B * K, -1)
             next_tokens_flat = torch.multinomial(probs_flat, num_samples=1)
-
-            if [self.eos_token_id] in next_tokens_flat.tolist():
-                break
-
-            # Reshape back to (B, K, 1)
             next_tokens = next_tokens_flat.view(B, K, 1)
-
-            # Append the newly generated tokens to the sequence
+            
             tgt = torch.cat([tgt, next_tokens], dim=-1)
 
-        # Remove the initial bos token we used to kickstart the generation
+            # Only break if the LAST codebook outputs EOS, ensuring all frames finish
+            if next_tokens[0, K-1, 0].item() == self.eos_token_id:
+                break
+
+        # Remove the initial initialization column
         tgt = tgt[:, :, 1:]
 
         # Realign the codebooks to fix the delay pattern offset
         aligned_audio_tokens = DelayProvider.revert_delay_pattern(tgt)
 
-        # Remove the initial bos token we used to kickstart the generation
+        # The first frame of the realigned tokens is always the BOS token; slice it out
         aligned_audio_tokens = aligned_audio_tokens[:, :, 1:]
 
+        # 2. Bulletproof Safety Mask: Catch ANY out-of-bounds tokens
+        # This catches negative padding (< 0) and unshifted special tokens (>= pad_token_id)
+        invalid_mask = (aligned_audio_tokens < 0) | (aligned_audio_tokens >= self.pad_token_id)
+        aligned_audio_tokens[invalid_mask] = 0
+    
         return aligned_audio_tokens
