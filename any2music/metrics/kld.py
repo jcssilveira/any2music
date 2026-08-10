@@ -55,13 +55,22 @@ class KLDMetric(BaseAudioMetric):
         for start in range(0, wav.size(1), max_length):
             chunk = wav[:, start:start + max_length]
             
+            if chunk.size(1) < 32000:
+                if start > 0:
+                    continue
+                else:
+                    chunk = F.pad(chunk, (0, 32000 - chunk.size(1)))
+                    
             with torch.no_grad():
                 logits = self.model(chunk.to(self.device))
                 probs = torch.softmax(logits, dim=-1)
                 probs_list.append(probs)
                 
-        # We concatenate the probabilities of all generated blocks
-        return torch.cat(probs_list, dim=0)
+        if len(probs_list) == 0:
+            return torch.zeros((1, 527), device=self.device)
+                
+
+        return torch.cat(probs_list, dim=0).mean(dim=0, keepdim=True)
 
     def update(self, preds: torch.Tensor, targets: torch.Tensor, current_sr: int, texts: list = None):
         """Resamples to 32kHz, extracts the probabilities and moves them to RAM."""

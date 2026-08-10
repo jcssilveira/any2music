@@ -10,19 +10,21 @@ class BaseAudioMetric(ABC):
         self.expected_sample_rate = expected_sample_rate
         self.device = device
         self.reset()
-
+    
+    
     def _resample_if_needed(self, waveform: torch.Tensor, current_sr: int) -> torch.Tensor:
-        """Automatically upsamples or downsamples the audio if the sample rate does not match the expected one."""
+        """Automatically upsamples or downsamples the audio on the CPU to avoid GPU OOM, then moves to device."""
         if current_sr == self.expected_sample_rate:
             return waveform.to(self.device)
         
-        # Creates the resampler dynamically
         resampler = torchaudio.transforms.Resample(
             orig_freq=current_sr, 
             new_freq=self.expected_sample_rate
-        ).to(self.device)
+        )
         
-        return resampler(waveform.to(self.device))
+        waveform = resampler(waveform.cpu())
+        
+        return waveform.to(self.device)
 
     @abstractmethod
     def reset(self):
