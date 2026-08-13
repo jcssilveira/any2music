@@ -2,15 +2,24 @@
 MOSAIC Any2Music (MAM) is a library for multimodal encoder-decoder model components with focus on music generation.
 
 ## Available Components
-### Audio Tokenizers
+### Audio 
+Tokenizers
 * [EnCodec](docs/audio/tokenizers/encodec.md)
 * [DAC (Improved RVQGAN)](docs/audio/tokenizers/dac.md)
 
-### Text Encoders
+Decoders
+* [MusicGen-like](docs/audio/decoders/musicgen.md)
+
+Dataloaders
+* [MTG-Jamendo](docs/audio/dataloaders/mtg_jamendo.md)
+
+### Text
+Encoders
 * [T5](docs/text/encoders/t5.md)
 
-### Audio Decoders
-* [MusicGen-like](docs/audio/decoders/musicgen.md)
+Decoders
+* [TextGen](docs/text/decoders/textgen.md)
+
 
 ## Installation
 ```bash
